@@ -1,4 +1,3 @@
-
 // ==========================================
 // CASE 404: MISSING TRUTH
 // COMPLETE GAME JAVASCRIPT
@@ -16,27 +15,197 @@ let score = 100;
 let seconds = 0;
 let timerInterval = null;
 let timerRunning = false;
+let lastPenaltySecond = 0;
+const TIME_LIMIT_SECONDS = 600; // 10 minutes
+const PENALTY_INTERVAL_SECONDS = 30; // Every 30 seconds
+const PENALTY_POINTS = 5;
+
 let hintCount = 0;
+let desktopHintCount = 0;
+const MAX_DESKTOP_HINTS = 10;
 let unlocked = false;
 let gameOver = false;
 let gameOverTimeout = null;
 let notificationTimeout = null;
 
 const correctPassword = "0907";
+const TOTAL_EVIDENCE = 5;
+const LEADERBOARD_KEY = "case404Leaderboard_v1";
+let collectedEvidence = new Set();
 
-// ==========================================
-// EVIDENCE COLLECTION SYSTEM
-// ==========================================
+// Files is always open; locked apps use the specified passwords:
+// - photos: "pjih" (case-insensitive)
+// - messages: "1179"
+// - notes: "elena" (case-insensitive)
+// - history: "1579"
+let unlockedApps = new Set(["files"]);
+let pendingUnlockApp = null;
 
-let evidenceCollected = [];
+const appUnlockConfig = {
+    photos: {
+        title: "UNLOCK PHOTO GALLERY",
+        prompt: "Enter the password to unlock PHOTO GALLERY.",
+        placeholder: "Enter password",
+        check: val => val.trim().toLowerCase() === "pjih"
+    },
+    messages: {
+        title: "UNLOCK MESSAGES",
+        prompt: "Enter the 4-digit password to unlock MESSAGES.",
+        placeholder: "4-digit password",
+        check: val => val.trim() === "1179"
+    },
+    notes: {
+        title: "UNLOCK PERSONAL NOTES",
+        prompt: "Enter the password to unlock PERSONAL NOTES.",
+        placeholder: "Enter password",
+        check: val => val.trim().toLowerCase() === "elena"
+    },
+    history: {
+        title: "UNLOCK BROWSER HISTORY",
+        prompt: "Enter the 4-digit password to unlock BROWSER HISTORY.",
+        placeholder: "4-digit password",
+        check: val => val.trim() === "1579"
+    }
+};
 
-const requiredEvidence = [
-    "files",
-    "photos",
-    "messages",
-    "notes",
-    "history"
+const desktopHints = [
+    "HINT 1 (Photos): It's a 4-letter code made from the first letters of the personal files.",
+    "HINT 2 (Photos): Look at Personal Information, Journal Entry, Important Documents, and hidden_404.dat.",
+    "HINT 3 (Photos): The 4 letters in order are P - J - I - H.",
+    "HINT 4 (Messages): The password is a 4-digit number.",
+    "HINT 5 (Messages): The 4-digit password for Messages is 1179.",
+    "HINT 6 (Notes): Look at who owns the account and appears in the conversations.",
+    "HINT 7 (Notes): The password for Notes is the victim's first name: elena.",
+    "HINT 8 (Browser History): The password is a 4-digit number.",
+    "HINT 9 (Browser History): The 4-digit password for Browser History is 1579.",
+    "HINT 10 (Summary): Passwords — Photos: pjih | Messages: 1179 | Notes: elena | History: 1579."
 ];
+
+let musicMuted = false;
+let clickAudioCtx = null;
+
+
+// ==========================================
+// BACKGROUND MUSIC (ON FROM BEGINNING) & CLICK SOUND
+// ==========================================
+
+function updateAudioButtonUI() {
+    const btn = document.getElementById("audioToggleBtn");
+    if (!btn) return;
+
+    if (musicMuted) {
+        btn.textContent = "🔇 SOUND: OFF";
+        btn.classList.add("muted");
+    } else {
+        btn.textContent = "🔊 SOUND: ON";
+        btn.classList.remove("muted");
+    }
+}
+
+
+function playBackgroundMusic() {
+    const audio = document.getElementById("bgMusic");
+    if (!audio) return;
+
+    audio.loop = true;
+    audio.volume = 0.35;
+    audio.muted = musicMuted;
+
+    if (!musicMuted) {
+        audio.play().catch(() => {});
+    }
+}
+
+
+function toggleBackgroundMusic() {
+    const audio = document.getElementById("bgMusic");
+    musicMuted = !musicMuted;
+    updateAudioButtonUI();
+
+    if (!audio) return;
+
+    audio.muted = musicMuted;
+    if (!musicMuted) {
+        audio.volume = 0.35;
+        audio.loop = true;
+        audio.play().catch(() => {});
+        showNotification("Background music enabled.");
+    } else {
+        showNotification("Background music muted.");
+    }
+}
+
+
+function playClickSound() {
+    if (musicMuted) return;
+
+    try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+
+        if (!clickAudioCtx) {
+            clickAudioCtx = new AudioContextClass();
+        }
+        if (clickAudioCtx.state === "suspended") {
+            clickAudioCtx.resume().catch(() => {});
+        }
+
+        const now = clickAudioCtx.currentTime;
+        const osc = clickAudioCtx.createOscillator();
+        const gain = clickAudioCtx.createGain();
+
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(520, now);
+        osc.frequency.exponentialRampToValueAtTime(190, now + 0.045);
+
+        gain.gain.setValueAtTime(0.08, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.045);
+
+        osc.connect(gain);
+        gain.connect(clickAudioCtx.destination);
+
+        osc.start(now);
+        osc.stop(now + 0.05);
+    } catch (_) {
+        // Ignore audio synthesis restrictions
+    }
+}
+
+
+function initBackgroundMusic() {
+    musicMuted = false;
+    updateAudioButtonUI();
+    playBackgroundMusic();
+
+    const unlockOnce = () => {
+        playBackgroundMusic();
+        document.removeEventListener("pointerdown", unlockOnce);
+        document.removeEventListener("keydown", unlockOnce);
+    };
+
+    document.addEventListener("pointerdown", unlockOnce, { once: true });
+    document.addEventListener("keydown", unlockOnce, { once: true });
+
+    document.addEventListener("click", function(event) {
+        if (event.target.closest("button, .clue-card, .app-icon")) {
+            playClickSound();
+        }
+    });
+}
+
+
+// ==========================================
+// SCORE SYNC
+// ==========================================
+
+function syncScoreDisplays() {
+    const currentScore = document.getElementById("currentScore");
+    const desktopScore = document.getElementById("desktopScore");
+
+    if (currentScore) currentScore.textContent = String(score);
+    if (desktopScore) desktopScore.textContent = String(score);
+}
+
 
 // ==========================================
 // SCREEN NAVIGATION
@@ -90,6 +259,8 @@ function backToInvestigation() {
     if (gameOver) return;
 
     closeApp();
+    closeUnlockAppModal();
+    closeCompileModal();
     showScreen("passwordScreen");
 
     showNotification("Returned to Password Investigation.");
@@ -129,7 +300,7 @@ function registerInvestigator() {
 
 
 // ==========================================
-// TIMER SYSTEM
+// TIMER SYSTEM (WITH 30s PENALTY & 10m LIMIT)
 // ==========================================
 
 function startInvestigation() {
@@ -143,6 +314,7 @@ function startInvestigation() {
         }
 
         seconds = 0;
+        lastPenaltySecond = 0;
         timerRunning = true;
 
         updateTimer();
@@ -154,24 +326,57 @@ function startInvestigation() {
             seconds++;
             updateTimer();
 
+            // Every 30 seconds elapsed: deduct 5 points
+            if (
+                seconds > 0 &&
+                seconds % PENALTY_INTERVAL_SECONDS === 0 &&
+                seconds !== lastPenaltySecond
+            ) {
+                lastPenaltySecond = seconds;
+                score = Math.max(0, score - PENALTY_POINTS);
+                syncScoreDisplays();
+
+                if (score <= 0) {
+                    triggerGameOver("You have run out of investigation points.");
+                    return;
+                }
+
+                showNotification(
+                    `30s passed: -${PENALTY_POINTS} points (${score} PTS left).`
+                );
+            }
+
+            // 10-minute (600s) time limit check
+            if (seconds >= TIME_LIMIT_SECONDS) {
+                score = 0;
+                syncScoreDisplays();
+                triggerGameOver("Time limit reached (10:00). Investigation terminated.");
+            }
+
         }, 1000);
 
-        showNotification("Investigation timer started.");
+        showNotification("Investigation timer started (10:00 limit).");
     }
 
     showScreen("passwordScreen");
 }
 
 
-function updateTimer() {
+function formatSeconds(totalSeconds) {
+    const minutes = Math.floor(totalSeconds / 60);
+    const remainingSeconds = totalSeconds % 60;
 
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-
-    const formattedTime =
+    return (
         String(minutes).padStart(2, "0") +
         ":" +
-        String(remainingSeconds).padStart(2, "0");
+        String(remainingSeconds).padStart(2, "0")
+    );
+}
+
+
+function updateTimer() {
+
+    const formattedTime = formatSeconds(seconds);
 
     const timer = document.getElementById("timer");
     const desktopClock = document.getElementById("desktopClock");
@@ -198,12 +403,344 @@ function stopTimer() {
 
 
 // ==========================================
+// EVIDENCE LOCKS, DESKTOP HINTS & CONCLUSION HELPERS
+// ==========================================
+
+function syncDesktopAppBadges() {
+    ["files", "photos", "messages", "notes", "history"].forEach(appName => {
+        const btn = document.getElementById(`appBtn-${appName}`);
+        const badge = document.getElementById(`appLock-${appName}`);
+        const isAppUnlocked = unlockedApps.has(appName);
+        const isCollected = collectedEvidence.has(appName);
+
+        if (btn) {
+            btn.classList.toggle("locked", !isAppUnlocked);
+            btn.classList.toggle("collected", isCollected);
+        }
+
+        if (badge) {
+            if (isCollected) {
+                badge.textContent = "✓ COLLECTED";
+            } else if (isAppUnlocked) {
+                badge.textContent = "OPEN";
+            } else {
+                badge.textContent = "🔒 LOCKED";
+            }
+        }
+    });
+}
+
+
+function updateDesktopHintUI() {
+    const usedEl = document.getElementById("desktopHintsUsed");
+    const btnEl = document.getElementById("desktopHintBtn");
+
+    if (usedEl) {
+        usedEl.textContent = String(desktopHintCount);
+    }
+
+    if (btnEl) {
+        btnEl.disabled = desktopHintCount >= MAX_DESKTOP_HINTS;
+        if (desktopHintCount >= MAX_DESKTOP_HINTS) {
+            btnEl.textContent = `MAX HINTS REACHED (${MAX_DESKTOP_HINTS}/${MAX_DESKTOP_HINTS})`;
+        } else {
+            btnEl.innerHTML = `ASK FOR PASSWORD HINT (-5 PTS • <span id="desktopHintsUsed">${desktopHintCount}</span>/${MAX_DESKTOP_HINTS} USED)`;
+        }
+    }
+}
+
+
+function useDesktopHint() {
+    if (!unlocked || gameOver) return;
+
+    if (desktopHintCount >= MAX_DESKTOP_HINTS) {
+        showNotification(`Maximum of ${MAX_DESKTOP_HINTS} desktop hints reached.`);
+        return;
+    }
+
+    score = Math.max(0, score - 5);
+    desktopHintCount++;
+
+    syncScoreDisplays();
+    updateDesktopHintUI();
+
+    if (score <= 0) {
+        triggerGameOver("You have run out of investigation points.");
+        return;
+    }
+
+    const hintMsg = desktopHints[Math.min(desktopHintCount - 1, desktopHints.length - 1)];
+    const outputEl = document.getElementById("desktopHintText");
+    if (outputEl) {
+        outputEl.textContent = hintMsg;
+    }
+
+    showNotification(hintMsg);
+}
+
+
+function resetEvidenceProgress() {
+    collectedEvidence.clear();
+    unlockedApps = new Set(["files"]);
+    pendingUnlockApp = null;
+    desktopHintCount = 0;
+
+    const outputEl = document.getElementById("desktopHintText");
+    if (outputEl) {
+        outputEl.textContent = `Need help finding an app password? Up to ${MAX_DESKTOP_HINTS} hints available (-5 points each).`;
+    }
+
+    syncDesktopAppBadges();
+    updateDesktopHintUI();
+    updateEvidenceUI();
+}
+
+
+function updateEvidenceUI() {
+    const count = collectedEvidence.size;
+    const counterEl = document.getElementById("evidenceCount");
+    const compileBtn = document.getElementById("compileCaseBtn");
+    const statusText = document.getElementById("compileStatusText");
+
+    if (counterEl) {
+        counterEl.textContent = `${count}/${TOTAL_EVIDENCE}`;
+    }
+
+    if (compileBtn) {
+        compileBtn.textContent = `COMPILE CASE (${count}/${TOTAL_EVIDENCE} EVIDENCE)`;
+        compileBtn.disabled = count < TOTAL_EVIDENCE;
+    }
+
+    if (statusText) {
+        statusText.textContent = count >= TOTAL_EVIDENCE
+            ? "All 5/5 evidence collected. You can now compile why Elena was murdered."
+            : `Collect all ${TOTAL_EVIDENCE}/${TOTAL_EVIDENCE} evidence items to compile why Elena was murdered.`;
+    }
+}
+
+
+function openUnlockAppModal(appName) {
+    const cfg = appUnlockConfig[appName];
+    const modal = document.getElementById("unlockAppModal");
+    const titleEl = document.getElementById("unlockAppTitle");
+    const promptEl = document.getElementById("unlockAppPrompt");
+    const inputEl = document.getElementById("appPassInput");
+    const errEl = document.getElementById("unlockAppError");
+
+    if (!cfg || !modal) return;
+
+    pendingUnlockApp = appName;
+    if (titleEl) titleEl.textContent = cfg.title;
+    if (promptEl) promptEl.textContent = cfg.prompt;
+    if (errEl) errEl.textContent = "";
+    if (inputEl) {
+        inputEl.value = "";
+        inputEl.placeholder = cfg.placeholder;
+    }
+
+    modal.classList.add("show");
+    if (inputEl) inputEl.focus();
+}
+
+
+function closeUnlockAppModal() {
+    const modal = document.getElementById("unlockAppModal");
+    if (modal) {
+        modal.classList.remove("show");
+    }
+    pendingUnlockApp = null;
+}
+
+
+function submitAppPassword() {
+    if (gameOver || !pendingUnlockApp) return;
+
+    const appName = pendingUnlockApp;
+    const cfg = appUnlockConfig[appName];
+    const inputEl = document.getElementById("appPassInput");
+    const errEl = document.getElementById("unlockAppError");
+
+    if (!cfg || !inputEl) return;
+
+    if (cfg.check(inputEl.value)) {
+        unlockedApps.add(appName);
+        syncDesktopAppBadges();
+        closeUnlockAppModal();
+        showNotification(`${appData[appName].title} unlocked.`);
+        openApp(appName);
+    } else {
+        score = Math.max(0, score - 10);
+        syncScoreDisplays();
+
+        if (score <= 0) {
+            triggerGameOver("You have run out of investigation points.");
+            return;
+        }
+
+        if (errEl) {
+            errEl.textContent = "Incorrect password. -10 POINTS.";
+        }
+        inputEl.value = "";
+        inputEl.focus();
+    }
+}
+
+
+function openCompileModal() {
+    if (gameOver || !unlocked || collectedEvidence.size < TOTAL_EVIDENCE) return;
+
+    const modal = document.getElementById("compileModal");
+    const err = document.getElementById("compileError");
+    if (err) err.textContent = "";
+
+    document.querySelectorAll('input[name="murderMotive"]').forEach(radio => {
+        radio.checked = false;
+    });
+
+    if (modal) {
+        modal.classList.add("show");
+    }
+}
+
+
+function closeCompileModal() {
+    const modal = document.getElementById("compileModal");
+    if (modal) {
+        modal.classList.remove("show");
+    }
+}
+
+
+function submitCaseConclusion() {
+    if (gameOver || collectedEvidence.size < TOTAL_EVIDENCE) return;
+
+    const selected = document.querySelector('input[name="murderMotive"]:checked');
+    const err = document.getElementById("compileError");
+
+    if (!selected) {
+        if (err) {
+            err.textContent = "Please select a conclusion before submitting.";
+        }
+        return;
+    }
+
+    if (err) err.textContent = "";
+
+    const isCorrectMotive = selected.value === "evidence";
+    if (!isCorrectMotive) {
+        score = Math.max(0, score - 15);
+    }
+
+    stopTimer();
+    closeApp();
+    closeUnlockAppModal();
+    closeCompileModal();
+
+    const finalScore = score;
+    const finalTimeFormatted = formatSeconds(seconds);
+    const investigatorName = investigator || "Anonymous Investigator";
+
+    saveLeaderboardEntry({
+        name: investigatorName,
+        score: finalScore,
+        seconds: seconds,
+        timeFormatted: finalTimeFormatted,
+        solvedAccurately: isCorrectMotive
+    });
+
+    renderSolvedScreen(investigatorName, finalScore, finalTimeFormatted, isCorrectMotive);
+    showScreen("solvedScreen");
+    showNotification("Case report submitted.");
+}
+
+
+function saveLeaderboardEntry(entry) {
+    let list = [];
+    try {
+        const raw = localStorage.getItem(LEADERBOARD_KEY);
+        if (raw) {
+            list = JSON.parse(raw);
+        }
+    } catch (_) {
+        list = [];
+    }
+
+    list.push(entry);
+
+    list.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.seconds - b.seconds;
+    });
+
+    list = list.slice(0, 10);
+
+    try {
+        localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(list));
+    } catch (_) {
+        // Ignore storage quota errors
+    }
+}
+
+
+function renderSolvedScreen(name, finalScore, timeFormatted, accurate) {
+    const verdictBox = document.getElementById("caseVerdictBox");
+    const invEl = document.getElementById("summaryInvestigator");
+    const scoreEl = document.getElementById("summaryScore");
+    const timeEl = document.getElementById("summaryTime");
+    const evEl = document.getElementById("summaryEvidence");
+    const listEl = document.getElementById("leaderboardList");
+
+    if (verdictBox) {
+        verdictBox.innerHTML = accurate
+            ? "<strong>CONCLUSION VERIFIED:</strong> Elena was targeted after uncovering sensitive evidence and refusing to delete her files and photos despite escalating stalking and threats."
+            : "<strong>CONCLUSION FLAGGED (-15 PTS):</strong> Evidence points to stalking, threats, and hidden files rather than your selected theory. Final score adjusted.";
+    }
+
+    if (invEl) invEl.textContent = name;
+    if (scoreEl) scoreEl.textContent = String(finalScore);
+    if (timeEl) timeEl.textContent = timeFormatted;
+    if (evEl) evEl.textContent = `${collectedEvidence.size}/${TOTAL_EVIDENCE}`;
+
+    if (listEl) {
+        let entries = [];
+        try {
+            const raw = localStorage.getItem(LEADERBOARD_KEY);
+            if (raw) entries = JSON.parse(raw);
+        } catch (_) {
+            entries = [];
+        }
+
+        if (!entries.length) {
+            listEl.innerHTML = `<div class="leaderboard-row"><span>No records yet.</span></div>`;
+            return;
+        }
+
+        listEl.innerHTML = entries.map((item, idx) => `
+            <div class="leaderboard-row">
+                <div>
+                    <strong>#${idx + 1} ${item.name}</strong>
+                    <small style="display:block;color:#999197;">Time: ${item.timeFormatted}</small>
+                </div>
+                <span>${item.score} PTS</span>
+            </div>
+        `).join("");
+    }
+}
+
+
+function resetToStartScreen() {
+    resetAfterGameOver();
+    showScreen("startScreen");
+}
+
+
+// ==========================================
 // AUTOMATIC GAME OVER SYSTEM
 // ==========================================
 
-function triggerGameOver() {
+function triggerGameOver(reasonMessage = "You have run out of investigation points.") {
 
-    if (gameOver || score > 0) return;
+    if (gameOver) return;
 
     gameOver = true;
     score = 0;
@@ -211,6 +748,8 @@ function triggerGameOver() {
     stopTimer();
     closeClue();
     closeApp();
+    closeUnlockAppModal();
+    closeCompileModal();
 
     const notification = document.getElementById("notification");
 
@@ -218,11 +757,7 @@ function triggerGameOver() {
         notification.classList.remove("show");
     }
 
-    const currentScore = document.getElementById("currentScore");
-
-    if (currentScore) {
-        currentScore.textContent = "0";
-    }
+    syncScoreDisplays();
 
     const oldOverlay = document.getElementById("gameOverOverlay");
 
@@ -234,46 +769,23 @@ function triggerGameOver() {
 
     overlay.id = "gameOverOverlay";
 
-overlay.innerHTML = `
-<div class="game-over-content">
+    overlay.innerHTML = `
+        <div class="game-over-content">
+            <p class="game-over-label">
+                CASE 404 / INVESTIGATION TERMINATED
+            </p>
 
-    <h2>CASE 404</h2>
+            <h1>GAME OVER</h1>
 
-    <h1>GAME OVER</h1>
+            <p class="game-over-message">
+                ${reasonMessage}
+            </p>
 
-    <hr>
-
-    <p>
-        <strong>Status:</strong><br>
-        Investigation Failed
-    </p>
-
-    <p>
-        <strong>Reason:</strong><br>
-        Investigation Points Depleted
-    </p>
-
-    <p>
-        <strong>Final Score:</strong> 0
-    </p>
-
-    <p>
-        <strong>Time:</strong>
-        ${document.getElementById("desktopClock").textContent}
-    </p>
-
-    <p>
-        <strong>Rank:</strong> F
-    </p>
-
-    <hr>
-
-    <p>
-        Returning to Investigation Guidelines...
-    </p>
-
-</div>
-`;
+            <p class="game-over-subtitle">
+                RETURNING TO INVESTIGATION GUIDELINES...
+            </p>
+        </div>
+    `;
 
     document.body.appendChild(overlay);
 
@@ -300,10 +812,12 @@ function resetAfterGameOver() {
     investigator = "";
     score = 100;
     seconds = 0;
+    lastPenaltySecond = 0;
     hintCount = 0;
     unlocked = false;
 
     stopTimer();
+    resetEvidenceProgress();
 
     const investigatorName =
         document.getElementById("investigatorName");
@@ -316,9 +830,6 @@ function resetAfterGameOver() {
 
     const passwordFeedback =
         document.getElementById("passwordFeedback");
-
-    const currentScore =
-        document.getElementById("currentScore");
 
     if (investigatorName) {
         investigatorName.value = "";
@@ -337,14 +848,13 @@ function resetAfterGameOver() {
         passwordFeedback.style.color = "";
     }
 
-    if (currentScore) {
-        currentScore.textContent = "100";
-    }
-
+    syncScoreDisplays();
     updateTimer();
 
     closeClue();
     closeApp();
+    closeUnlockAppModal();
+    closeCompileModal();
 
     const notification = document.getElementById("notification");
 
@@ -431,15 +941,10 @@ function useHint() {
     if (unlocked || gameOver) return;
 
     score = Math.max(0, score - 5);
-
-    const currentScore = document.getElementById("currentScore");
-
-    if (currentScore) {
-        currentScore.textContent = score;
-    }
+    syncScoreDisplays();
 
     if (score <= 0) {
-        triggerGameOver();
+        triggerGameOver("You have run out of investigation points.");
         return;
     }
 
@@ -500,8 +1005,6 @@ function checkPassword() {
 
         unlocked = true;
 
-        stopTimer();
-
         feedback.style.color = "#72b58b";
 
         feedback.textContent =
@@ -516,6 +1019,10 @@ function checkPassword() {
             if (gameOver) return;
 
             closeApp();
+            syncDesktopAppBadges();
+            updateDesktopHintUI();
+            updateEvidenceUI();
+            syncScoreDisplays();
 
             showScreen("computerScreen");
 
@@ -533,13 +1040,7 @@ function checkPassword() {
     else {
 
         score = Math.max(0, score - 10);
-
-        const currentScore =
-            document.getElementById("currentScore");
-
-        if (currentScore) {
-            currentScore.textContent = score;
-        }
+        syncScoreDisplays();
 
         feedback.style.color = "#e16c72";
 
@@ -549,7 +1050,7 @@ function checkPassword() {
         input.value = "";
 
         if (score <= 0) {
-            triggerGameOver();
+            triggerGameOver("You have run out of investigation points.");
             return;
         }
 
@@ -565,7 +1066,7 @@ function checkPassword() {
 const appData = {
 
     // --------------------------------------
-    // FILES
+    // FILES (ALWAYS OPEN)
     // --------------------------------------
 
     files: {
@@ -958,6 +1459,11 @@ function openApp(appName) {
 
     if (!app) return;
 
+    if (!unlockedApps.has(appName)) {
+        openUnlockAppModal(appName);
+        return;
+    }
+
     const appTitle = document.getElementById("appTitle");
     const appContent = document.getElementById("appContent");
     const appWindow = document.getElementById("appWindow");
@@ -969,9 +1475,19 @@ function openApp(appName) {
 
     appWindow.classList.add("show");
 
-    showNotification(app.title + " opened.");
-
-    collectEvidence(appName);
+    const isNewEvidence = !collectedEvidence.has(appName);
+    if (isNewEvidence) {
+        collectedEvidence.add(appName);
+        syncDesktopAppBadges();
+        updateEvidenceUI();
+        showNotification(
+            `Evidence collected (${collectedEvidence.size}/${TOTAL_EVIDENCE}): ${app.title}`
+        );
+    } else {
+        showNotification(
+            `${app.title} already examined (${collectedEvidence.size}/${TOTAL_EVIDENCE} evidence).`
+        );
+    }
 }
 
 
@@ -988,421 +1504,6 @@ function closeApp() {
     }
 }
 
-// ==========================================
-// EVIDENCE COLLECTION
-// ==========================================
-
-function collectEvidence(appName) {
-
-    console.log("collectEvidence called:", appName);
-
-    if (!requiredEvidence.includes(appName)) return;
-
-    if (evidenceCollected.includes(appName)) return;
-
-    evidenceCollected.push(appName);
-
-    showNotification(
-        "Evidence Collected! (" +
-        evidenceCollected.length +
-        "/5)"
-    );
-
-    if (evidenceCollected.length === requiredEvidence.length) {
-        unlockHiddenFile();
-    }
-}
-
-// ==========================================
-// HIDDEN FILE
-// ==========================================
-
-function unlockHiddenFile() {
-
-    const appTitle = document.getElementById("appTitle");
-    const appContent = document.getElementById("appContent");
-    const appWindow = document.getElementById("appWindow");
-
-    appTitle.textContent = "EVIDENCE ANALYSIS";
-
-    appContent.innerHTML = `
-        <h3>INVESTIGATION REPORT</h3>
-
-        <div class="app-item">
-            ✅ Journal Entry Reviewed
-        </div>
-
-        <div class="app-item">
-            ✅ Threatening Messages Verified
-        </div>
-
-        <div class="app-item">
-            ✅ Suspicious Photos Examined
-        </div>
-
-        <div class="app-item">
-            ✅ Personal Notes Reviewed
-        </div>
-
-        <div class="app-item">
-            ✅ Browser History Analyzed
-        </div>
-
-        <div class="app-notice">
-            <strong>ANALYSIS COMPLETE</strong><br><br>
-
-            All collected evidence indicates that
-            Elena was being threatened before her death.
-
-            <br><br>
-
-            A hidden encrypted file has been detected.
-        </div>
-
-        <br>
-
-        <button onclick="openHiddenFile()">
-            OPEN HIDDEN FILE
-        </button>
-    `;
-
-    appWindow.classList.add("show");
-}
-
-function openHiddenFile() {
-
-    const appTitle = document.getElementById("appTitle");
-    const appContent = document.getElementById("appContent");
-
-    appTitle.textContent = "hidden_404.dat";
-
-    appContent.innerHTML = `
-        <h3>ENCRYPTED FILE RECOVERED</h3>
-
-        <div class="app-item">
-
-            <p>
-
-            If you are reading this...
-
-            <br><br>
-
-            I failed.
-
-            <br><br>
-
-            The person threatening me is someone I know.
-
-            <br><br>
-
-            They made it look like an accident.
-
-            <br><br>
-
-            I copied every piece of evidence into this file.
-
-            <br><br>
-
-            If I disappear...
-
-            don't believe the official report.
-
-            <br><br>
-
-            Find the truth.
-
-            </p>
-
-        </div>
-
-        <br>
-
-        <button onclick="showPlotTwist()">
-            CONTINUE INVESTIGATION
-        </button>
-    `;
-}
-
-function showPlotTwist() {
-
-     const appTitle = document.getElementById("appTitle");
-    const appContent = document.getElementById("appContent");
-
-    appTitle.textContent = "UNKNOWN TRANSMISSION";
-
-    appContent.innerHTML = `
-
-        <h3>INCOMING MESSAGE...</h3>
-
-        <div class="app-item">
-
-            <strong>UNKNOWN</strong>
-
-            <p>
-
-            "So... you found the hidden file."
-
-            <br><br>
-
-            "You really think you've uncovered
-            the whole truth?"
-
-            <br><br>
-
-            "You've only seen what Elena wanted
-            you to see."
-
-            <br><br>
-
-            "Some evidence was deleted."
-
-            <br><br>
-
-            "I'm still watching."
-
-            <br><br>
-
-            <strong>Connection Lost...</strong>
-
-            </p>
-
-        </div>
-
-        <br>
-
-        <button onclick="showFinalDecision()">
-            REVIEW CASE
-        </button>
-
-    `;
-}
-
-function showFinalDecision() {
-
-    const appTitle = document.getElementById("appTitle");
-    const appContent = document.getElementById("appContent");
-
-    appTitle.textContent = "FINAL DECISION";
-
-    appContent.innerHTML = `
-
-        <h3>CASE REVIEW</h3>
-
-        <p>
-        After examining every piece of evidence,
-        what is your conclusion?
-        </p>
-
-        <br>
-
-        <button onclick="finishGame(true)">
-            Elena was murdered.
-        </button>
-
-        <br><br>
-
-        <button onclick="finishGame(false)">
-            Elena died by suicide.
-        </button>
-
-    `;
-}
-
-function finishGame(correctAnswer) {
-
-    const appTitle = document.getElementById("appTitle");
-    const appContent = document.getElementById("appContent");
-
-    let rank = "";
-
-    if (score >= 90) {
-        rank = "S";
-    }
-    else if (score >= 75) {
-        rank = "A";
-    }
-    else if (score >= 60) {
-        rank = "B";
-    }
-    else {
-        rank = "C";
-    }
-
-    let bestScore = Number(localStorage.getItem("case404HighScore")) || 0;
-
-if (score > bestScore) {
-    localStorage.setItem("case404HighScore", score);
-    bestScore = score;
-}
-
-// ==========================================
-// LEADERBOARD
-// ==========================================
-
-let leaderboard =
-    JSON.parse(localStorage.getItem("case404Leaderboard")) || [];
-
-leaderboard.push({
-    name: investigator,
-    score: score,
-    rank: rank,
-    time: document.getElementById("desktopClock").textContent
-});
-
-leaderboard.sort((a, b) => b.score - a.score);
-
-leaderboard = leaderboard.slice(0, 5);
-
-localStorage.setItem(
-    "case404Leaderboard",
-    JSON.stringify(leaderboard)
-);
-
-let leaderboardHTML = `
-
-<hr>
-
-<h2 style="text-align:center;">
-🏆 DETECTIVE HALL OF FAME
-</h2>
-
-<p style="text-align:center;">
-Top 5 Investigators
-</p>
-
-`;
-
-leaderboard.forEach((player, index) => {
-
-    let medal = "";
-
-    if (index === 0) {
-        medal = "🥇";
-    }
-    else if (index === 1) {
-        medal = "🥈";
-    }
-    else if (index === 2) {
-        medal = "🥉";
-    }
-    else {
-        medal = "🏅";
-    }
-
-    leaderboardHTML += `
-
-        <div class="app-item">
-
-            <h3>${medal} ${player.name}</h3>
-
-            <p>
-
-            <strong>Score:</strong> ${player.score} Points
-
-            <br>
-
-            <strong>Rank:</strong> ${player.rank}
-
-            <br>
-
-            <strong>Completion Time:</strong> ${player.time}
-
-            </p>
-
-        </div>
-
-    `;
-
-});
-
-leaderboardHTML += `
-
-<hr>
-
-`;
-
-    if (correctAnswer) {
-
-        appTitle.textContent = "CASE CLOSED";
-
-        appContent.innerHTML = `
-
-            <h3>YOU SOLVED THE CASE!</h3>
-
-            <div class="app-item">
-
-                <p>
-
-                Based on the recovered evidence,
-                Elena was being threatened before
-                her death.
-
-                <br><br>
-
-                The investigation concludes that
-                her death was NOT a suicide.
-
-                </p>
-
-            </div>
-
-            <hr>
-
-            <strong>Final Score:</strong> ${score}<br>
-            <strong>Best Score:</strong> ${bestScore}<br>
-            <strong>Time:</strong> ${document.getElementById("desktopClock").textContent}<br>
-            <strong>Rank:</strong> ${rank}
-
-            <br><br>
-
-            <button onclick="restartGame()">
-                PLAY AGAIN
-            </button>
-
-        ${leaderboardHTML}
-
-        `;
-
-    } else {
-
-        appTitle.textContent = "CASE FAILED";
-
-        appContent.innerHTML = `
-
-            <h3>INCORRECT CONCLUSION</h3>
-
-            <div class="app-item">
-
-                <p>
-
-                The collected evidence contradicts
-                your conclusion.
-
-                Important clues were overlooked.
-
-                </p>
-
-            </div>
-
-            <hr>
-
-            <strong>Final Score:</strong> ${score}<br>
-            <strong>Best Score:</strong> ${bestScore}<br>
-            <strong>Time:</strong> ${document.getElementById("desktopClock").textContent}<br>
-            <strong>Rank:</strong> ${rank}
-
-            <br><br>
-
-            <button onclick="restartGame()">
-                TRY AGAIN
-            </button>
-
-        ${leaderboardHTML}
-
-        `;
-    }
-
-}
 
 // ==========================================
 // NOTIFICATION SYSTEM
@@ -1442,15 +1543,14 @@ function returnToMainMenu() {
     if (!confirmReturn) return;
 
     stopTimer();
+    resetEvidenceProgress();
 
     investigator = "";
     score = 100;
     seconds = 0;
+    lastPenaltySecond = 0;
     hintCount = 0;
     unlocked = false;
-
-    const currentScore =
-        document.getElementById("currentScore");
 
     const passwordInput =
         document.getElementById("passwordInput");
@@ -1463,10 +1563,6 @@ function returnToMainMenu() {
 
     const registrationError =
         document.getElementById("registrationError");
-
-    if (currentScore) {
-        currentScore.textContent = score;
-    }
 
     if (passwordInput) {
         passwordInput.value = "";
@@ -1485,8 +1581,11 @@ function returnToMainMenu() {
         registrationError.textContent = "";
     }
 
+    syncScoreDisplays();
     closeApp();
     closeClue();
+    closeUnlockAppModal();
+    closeCompileModal();
 
     updateTimer();
 
@@ -1512,6 +1611,16 @@ document.addEventListener("keydown", function(event) {
     if (event.key === "Escape") {
         closeClue();
         closeApp();
+        closeUnlockAppModal();
+        closeCompileModal();
+    }
+
+    if (
+        event.key === "Enter" &&
+        document.getElementById("unlockAppModal")?.classList.contains("show") &&
+        document.activeElement.id === "appPassInput"
+    ) {
+        submitAppPassword();
     }
 
     if (
@@ -1524,54 +1633,6 @@ document.addEventListener("keydown", function(event) {
 
 });
 
-// ==========================================
-// RESTART GAME
-// ==========================================
-
-function restartGame() {
-
-    evidenceCollected = [];
-
-    investigator = "";
-    score = 100;
-    seconds = 0;
-    hintCount = 0;
-    unlocked = false;
-    gameOver = false;
-
-    stopTimer();
-
-    const currentScore = document.getElementById("currentScore");
-    if (currentScore) {
-        currentScore.textContent = "100";
-    }
-
-    const passwordInput = document.getElementById("passwordInput");
-    if (passwordInput) {
-        passwordInput.value = "";
-    }
-
-    const passwordFeedback = document.getElementById("passwordFeedback");
-    if (passwordFeedback) {
-        passwordFeedback.textContent = "";
-        passwordFeedback.style.color = "";
-    }
-
-    const investigatorName = document.getElementById("investigatorName");
-    if (investigatorName) {
-        investigatorName.value = "";
-    }
-
-    updateTimer();
-
-    closeApp();
-    closeClue();
-
-    showScreen("startScreen");
-
-    showNotification("New investigation started.");
-}
-
 
 // ==========================================
 // INITIAL GAME DISPLAY
@@ -1579,13 +1640,11 @@ function restartGame() {
 
 document.addEventListener("DOMContentLoaded", function() {
 
-    const currentScore =
-        document.getElementById("currentScore");
-
-    if (currentScore) {
-        currentScore.textContent = score;
-    }
-
+    initBackgroundMusic();
+    syncDesktopAppBadges();
+    updateDesktopHintUI();
+    updateEvidenceUI();
+    syncScoreDisplays();
     updateTimer();
 
     showScreen("startScreen");

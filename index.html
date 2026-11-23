@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,6 +10,12 @@
 </head>
 
 <body>
+
+<audio id="bgMusic" src="music/case404-ambience.mp3" loop preload="auto"></audio>
+
+<button id="audioToggleBtn" class="audio-toggle-btn" type="button" onclick="toggleBackgroundMusic()" aria-label="Toggle Background Music">
+    🔊 SOUND: ON
+</button>
 
 <div class="ambient"></div>
 
@@ -67,7 +72,7 @@
             <p><span>03.</span> Use hints when necessary. Every hint deducts 5 points.</p>
             <p><span>04.</span> Every incorrect password deducts 10 points.</p>
             <p><span>05.</span> Unlock Elena's computer to explore its contents.</p>
-            <p><span>06.</span> Examine files, photos, messages, notes, and browser history.</p>
+            <p><span>06.</span> Examine unlocked evidence to find passwords for locked files, photos, messages, notes, and browser history.</p>
             <p><span>07.</span> Pay attention to details. They may reveal the truth.</p>
         </div>
 
@@ -396,7 +401,13 @@
             <p class="muted">Welcome back, Elena.</p>
 
             <p class="muted">
-                Select an application to explore its contents.
+                Files is unlocked. Examine evidence and unlock the remaining apps to gather 5/5 evidence.
+            </p>
+
+            <p class="evidence-counter">
+                EVIDENCE COLLECTED: <span id="evidenceCount">0/5</span>
+                &nbsp;|&nbsp;
+                SCORE: <span id="desktopScore">100</span>
             </p>
 
         </div>
@@ -404,31 +415,54 @@
 
         <div class="app-grid">
 
-            <button class="app-icon" onclick="openApp('files')">
+            <button id="appBtn-files" class="app-icon" onclick="openApp('files')">
                 <span>📁</span>
                 <small>Files</small>
+                <small id="appLock-files" class="lock-badge">OPEN</small>
             </button>
 
-            <button class="app-icon" onclick="openApp('photos')">
+            <button id="appBtn-photos" class="app-icon locked" onclick="openApp('photos')">
                 <span>🖼️</span>
                 <small>Photos</small>
+                <small id="appLock-photos" class="lock-badge">🔒 LOCKED</small>
             </button>
 
-            <button class="app-icon" onclick="openApp('messages')">
+            <button id="appBtn-messages" class="app-icon locked" onclick="openApp('messages')">
                 <span>✉️</span>
                 <small>Messages</small>
+                <small id="appLock-messages" class="lock-badge">🔒 LOCKED</small>
             </button>
 
-            <button class="app-icon" onclick="openApp('notes')">
+            <button id="appBtn-notes" class="app-icon locked" onclick="openApp('notes')">
                 <span>📝</span>
                 <small>Notes</small>
+                <small id="appLock-notes" class="lock-badge">🔒 LOCKED</small>
             </button>
 
-            <button class="app-icon" onclick="openApp('history')">
+            <button id="appBtn-history" class="app-icon locked" onclick="openApp('history')">
                 <span>🌐</span>
                 <small>Browser History</small>
+                <small id="appLock-history" class="lock-badge">🔒 LOCKED</small>
             </button>
 
+        </div>
+
+        <div class="desktop-hint-box">
+            <button id="desktopHintBtn" class="hint-btn" onclick="useDesktopHint()">
+                ASK FOR PASSWORD HINT (-5 PTS • <span id="desktopHintsUsed">0</span>/10 USED)
+            </button>
+            <p id="desktopHintText" class="muted desktop-hint-output">
+                Need help finding an app password? Up to 10 hints available (-5 points each).
+            </p>
+        </div>
+
+        <div class="compile-section">
+            <p id="compileStatusText" class="muted">
+                Collect all 5/5 evidence items to compile why Elena was murdered.
+            </p>
+            <button id="compileCaseBtn" class="primary-btn" onclick="openCompileModal()" disabled>
+                COMPILE CASE (0/5 EVIDENCE)
+            </button>
         </div>
 
 
@@ -436,6 +470,117 @@
             <span>ELENA-PC / SYSTEM ONLINE</span>
             <span>PRIVATE USER ACCOUNT</span>
         </div>
+
+    </div>
+</section>
+
+
+<!-- ================================== -->
+<!-- UNLOCK EVIDENCE APP MODAL -->
+<!-- ================================== -->
+
+<div id="unlockAppModal" class="modal">
+    <div class="modal-content">
+
+        <button class="close-btn" onclick="closeUnlockAppModal()">
+            ×
+        </button>
+
+        <p class="eyebrow">ENCRYPTED EVIDENCE</p>
+        <h2 id="unlockAppTitle">UNLOCK APPLICATION</h2>
+
+        <p id="unlockAppPrompt" class="muted"></p>
+
+        <input
+            type="text"
+            id="appPassInput"
+            placeholder="Enter password"
+            maxlength="20"
+            autocomplete="off"
+        >
+
+        <p id="unlockAppError" class="error-message"></p>
+
+        <button class="primary-btn" onclick="submitAppPassword()">
+            UNLOCK EVIDENCE
+        </button>
+
+    </div>
+</div>
+
+
+<!-- ================================== -->
+<!-- COMPILE MURDER CONCLUSION MODAL -->
+<!-- ================================== -->
+
+<div id="compileModal" class="modal">
+    <div class="modal-content compile-modal-content">
+
+        <button class="close-btn" onclick="closeCompileModal()">
+            ×
+        </button>
+
+        <p class="eyebrow">FINAL CASE COMPILATION</p>
+        <h2>WHY WAS ELENA MURDERED?</h2>
+
+        <p class="muted">
+            Based on the 5 pieces of evidence you gathered, select why Elena was targeted on July 9–10, 2026:
+        </p>
+
+        <div class="motive-options">
+            <label class="motive-option">
+                <input type="radio" name="murderMotive" value="accidental">
+                <span>She died in an accidental fall while checking her locked apartment door.</span>
+            </label>
+
+            <label class="motive-option">
+                <input type="radio" name="murderMotive" value="evidence">
+                <span>She uncovered hidden evidence and refused to delete files and photos after being stalked and threatened.</span>
+            </label>
+
+            <label class="motive-option">
+                <input type="radio" name="murderMotive" value="robbery">
+                <span>A random burglary occurred with no connection to her messages or files.</span>
+            </label>
+        </div>
+
+        <p id="compileError" class="error-message"></p>
+
+        <button class="primary-btn" onclick="submitCaseConclusion()">
+            SUBMIT CASE REPORT
+        </button>
+
+    </div>
+</div>
+
+
+<!-- ================================== -->
+<!-- CASE SOLVED & LEADERBOARD SCREEN -->
+<!-- ================================== -->
+
+<section id="solvedScreen" class="screen">
+    <div class="panel solved-panel">
+
+        <p class="eyebrow">CASE FILE #404 • CLOSED</p>
+        <h2>INVESTIGATION REPORT</h2>
+
+        <div id="caseVerdictBox" class="verdict-box"></div>
+
+        <div class="summary-stats">
+            <p><strong>INVESTIGATOR:</strong> <span id="summaryInvestigator">-</span></p>
+            <p><strong>FINAL SCORE:</strong> <span id="summaryScore">0</span></p>
+            <p><strong>ELAPSED TIME:</strong> <span id="summaryTime">00:00</span></p>
+            <p><strong>EVIDENCE GATHERED:</strong> <span id="summaryEvidence">5/5</span></p>
+        </div>
+
+        <div class="leaderboard-box">
+            <p class="eyebrow">TOP INVESTIGATORS LEADERBOARD</p>
+            <div id="leaderboardList" class="leaderboard-list"></div>
+        </div>
+
+        <button class="primary-btn" onclick="resetToStartScreen()">
+            NEW INVESTIGATION
+        </button>
 
     </div>
 </section>
@@ -474,50 +619,6 @@
 <!-- ================================== -->
 
 <script src="script.js"></script>
-
-<div id="resultsScreen" class="screen">
-
-    <div class="container">
-
-        <h1 id="resultTitle">
-            CASE CLOSED
-        </h1>
-
-        <h2 id="resultSubtitle"></h2>
-
-        <p>
-            <strong>Investigator:</strong>
-            <span id="resultName"></span>
-        </p>
-
-        <p>
-            <strong>Final Score:</strong>
-            <span id="resultScore"></span>
-        </p>
-
-        <p>
-            <strong>Completion Time:</strong>
-            <span id="resultTime"></span>
-        </p>
-
-        <p>
-            <strong>Rank:</strong>
-            <span id="resultRank"></span>
-        </p>
-
-        <br>
-
-        <button onclick="restartGame()">
-            PLAY AGAIN
-        </button>
-
-        <button onclick="returnToMainMenu()">
-            MAIN MENU
-        </button>
-
-    </div>
-
-</div>
 
 </body>
 </html>
